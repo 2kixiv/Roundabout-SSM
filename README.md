@@ -1163,30 +1163,28 @@ FDE = 마지막 시점의 위치 오차
 
 
 
-### 10.4. 미래 궤적 예측 성능 비교
+### 10.4 미래 궤적 예측 성능 비교
 
-본 실험에서는 LSTM, Transformer, Mamba2의 시간적 특징 추출 성능을 공정하게 비교하기 위해 세 모델 모두 Residual Interaction 모듈을 제외한 Baseline 구성을 사용하였다.
+향후 4초의 미래 주행 궤적을 예측하고, Average Displacement Error(ADE)와 Final Displacement Error(FDE)를 이용하여 성능을 비교하였다.
 
-각 모델은 동일한 rounD Recording Split과 입력 데이터를 사용하며, 과거 2초(50프레임)의 Ego 및 주변 차량 움직임을 바탕으로 미래 4초의 궤적을 0.2초 간격의 20개 Waypoint로 예측한다.
+모든 기본 Backbone 비교는 동일한 Multi-agent 입력 조건에서 수행하였으며, 진입 판단 Backbone을 고정한 상태로 Trajectory Head를 학습하였다.
 
-사전 학습된 Backbone 파라미터를 고정(Freeze)하고, 동일한 구조의 Trajectory Head(13,736개 학습 파라미터)만 학습하였다.
+| Model | ADE (m) ↓ | FDE (m) ↓ |
+|---|---:|---:|
+| Constant Velocity | 3.5826 | 9.1725 |
+| LSTM | 0.8432 | 2.0394 |
+| Transformer | 0.9114 | 2.1825 |
+| **Mamba2 Baseline** | **0.7596** | 1.9009 |
+| Mamba2 + Residual Interaction (Original) | 0.7742 | 1.8905 |
+| Mamba2 + Residual Interaction (Train-only Geometry) | 0.7745 | **1.8905** |
 
-#### 1. 동일 조건의 Backbone 성능 비교
+기본 Backbone 중 Mamba2가 가장 낮은 ADE와 FDE를 기록하였다.
 
-| 모델 | Interaction | ADE (m) ↓ | FDE (m) ↓ |
-|---|---|---:|---:|
-| LSTM Baseline | 없음 | 0.8432 | 2.0394 |
-| Transformer Baseline | 없음 | 0.9114 | 2.1825 |
-| **Mamba2 Baseline** | 없음 | **0.7596** | **1.9009** |
+Residual Interaction을 추가하면 Mamba2 Baseline 대비 FDE는 1.9009m에서 1.8905m로 감소했지만, ADE는 0.7596m에서 0.7742m로 증가하였다.
 
-ADE(Average Displacement Error)는 미래 궤적 전체의 평균 위치 오차이며, FDE(Final Displacement Error)는 예측 구간의 마지막 시점에서 발생한 위치 오차이다. 두 지표 모두 낮을수록 예측 성능이 우수하다.
+이후 Train Recording만으로 Conflict Point를 재계산하고 Interaction 모델을 재학습한 결과, ADE 0.7745m, FDE 1.8905m를 기록하였다.
 
-동일한 실험 조건에서 Mamba2 Baseline이 가장 낮은 ADE와 FDE를 기록하였다.
-
-- LSTM 대비 Mamba2: ADE 약 9.91%, FDE 약 6.79% 감소
-- Transformer 대비 Mamba2: ADE 약 16.66%, FDE 약 12.90% 감소
-
-이를 통해 본 데이터셋과 실험 조건에서 Mamba2의 시간적 특징 표현이 LSTM 및 Transformer보다 효과적인 궤적 예측 결과를 제공함을 확인하였다.
+최종 Train-only Geometry 모델은 Constant Velocity Baseline 대비 ADE 약 78.38%, FDE 약 79.39%의 오차 감소를 기록하였다.
 
 #### 2. Residual Interaction 적용 효과
 
@@ -1413,38 +1411,146 @@ TTC 및 Temporal Gap 기반 interaction feature는
 
 ---
 
-### 11.4 최종 모델 출력
+### 11.4 최종 모델 출력 및 추가 검증
 
-최종 모델은 하나의 입력으로부터 다음 5개의 결과를 동시에 예측한다.
+최종 모델은 과거 2초의 Ego 및 주변 최대 8대 차량의 주행 정보를 입력받아 다음 항목을 예측한다.
 
-```text
-1. GO / WAIT
-2. Time-to-Entry
-3. Entry Speed
-4. Entry Heading
-5. Future Trajectory (4 s)
-```
+- GO / WAIT 진입 판단
+- Time-to-Entry (TTE)
+- Entry Speed
+- Entry Heading
+- 향후 4초의 Future Trajectory (20 Waypoints)
 
-최종 Test 성능은 다음과 같다.
+#### 최종 Test 성능
 
-| 항목 | 결과 |
+최종 모델은 Train Recording만 사용하여 Conflict Point를 생성하고, Interaction Feature를 재계산한 뒤 재학습한 Residual Interaction Mamba2 모델이다.
+
+| Metric | Result |
 |---|---:|
-| Accuracy | **99.73%** |
+| GO/WAIT Accuracy | **99.73%** |
 | F1-score | **0.9971** |
 | TTE MAE | **0.1024 s** |
-| Entry Speed MAE | **0.3456 m/s** |
+| Entry Speed MAE | **0.3455 m/s** |
 | Entry Heading MAE | **2.384°** |
-| Trajectory ADE | **0.7742 m** |
+| Trajectory ADE | **0.7745 m** |
 | Trajectory FDE | **1.8905 m** |
 
-GO / WAIT classification의 confusion matrix는 다음과 같다.
+Test Set은 13,296개의 Decision Sample로 구성된다.
 
-| | Pred WAIT | Pred GO |
+---
+
+#### 11.4.1 Transformer와 LSTM 성능 검증
+
+Transformer가 LSTM보다 높은 예측 오차를 기록한 현상을 확인하기 위해 3-Seed 반복 학습과 Full-Backbone Fine-tuning을 수행하였다.
+
+**3-Seed Frozen-Backbone Trajectory Head 실험**
+
+| Model | ADE (m) ↓ | FDE (m) ↓ |
 |---|---:|---:|
-| True WAIT | 7,086 | 21 |
-| True GO | 15 | 6,174 |
+| LSTM | 0.8442 ± 0.0022 | 2.0435 ± 0.0085 |
+| Transformer | 0.8833 ± 0.0244 | 2.1473 ± 0.0310 |
+| Mamba2 | 0.7772 ± 0.0367 | 1.8955 ± 0.0212 |
 
-총 13,296개의 Test sample 중 오분류는 36개였다.
+기존 Backbone을 고정하고 Trajectory Head 초기화를 3개 Seed로 변경하여 반복 실험하였다.
+
+**Full-Backbone Fine-tuning (Seed 42)**
+
+| Model | ADE (m) ↓ | FDE (m) ↓ |
+|---|---:|---:|
+| LSTM | **0.6250** | **1.6885** |
+| Transformer | 0.6751 | 1.7871 |
+
+두 모델 모두 전체 Backbone Fine-tuning 이후 오차가 감소했지만, LSTM이 Transformer보다 낮은 ADE와 FDE를 유지하였다.
+
+따라서 Transformer와 LSTM의 성능 차이는 단일 Trajectory Head 초기화나 Backbone 고정 조건에서만 나타난 현상이 아님을 확인하였다.
+
+---
+
+#### 11.4.2 Interaction Feature Ablation
+
+Conflict Point 기반 Interaction Feature가 예측 성능에 미치는 영향을 확인하기 위해 Feature 그룹을 제거하고 Backbone과 Trajectory Head를 재학습하였다.
+
+| Feature Configuration | ADE (m) ↓ | FDE (m) ↓ |
+|---|---:|---:|
+| Full Interaction | 0.7742 | 1.8905 |
+| Ego Only | **0.7733** | **1.8872** |
+| Lead TTC 제거 | 0.7766 | 1.8916 |
+| Temporal Gap 제거 | 0.7890 | 1.8951 |
+| Lead TTC + Temporal Gap 제거 | 0.7903 | 1.8953 |
+
+Temporal Gap을 제거한 경우 Full Interaction 대비 ADE가 0.7742m에서 0.7890m로 증가하였다.
+
+이는 Temporal Gap 정보가 Full Interaction 구성에서 예측 성능에 기여하고 있음을 보여준다.
+
+반면 Ego Only 모델은 Full Interaction보다 ADE와 FDE가 소폭 낮았다. 따라서 주변 차량 관련 Interaction Feature 전체를 사용하는 것이 모든 평가 지표에서 항상 유리한 것은 아니었다.
+
+---
+
+#### 11.4.3 No-Interaction Control
+
+Interaction 모듈의 효과와 추가 Backbone 학습의 효과를 구분하기 위해 No-Interaction Control 실험을 수행하였다.
+
+기존 Mamba2 Backbone에서 추가 학습을 진행하되, Interaction 보정항의 가중치 alpha를 0으로 고정하였다.
+
+| Model | ADE (m) ↓ | FDE (m) ↓ |
+|---|---:|---:|
+| Original Mamba2 Baseline | **0.7596** | 1.9009 |
+| No-Interaction Control | 0.7917 | 1.8957 |
+| Full Interaction | 0.7742 | **1.8905** |
+
+Full Interaction은 동일한 추가 학습 절차를 적용한 No-Interaction Control 대비 ADE 2.21%, FDE 0.27% 낮은 오차를 기록하였다.
+
+Interaction 보정항이 추가 학습 조건에서 예측 오차를 줄이는 데 기여했으나, Original Mamba2 Baseline의 ADE 0.7596m보다는 높았다.
+
+---
+
+#### 11.4.4 Train-only Conflict Geometry 검증
+
+초기 Conflict Point 생성 과정에서는 전체 Recording의 진입 궤적을 사용하였다.
+
+이를 개선하기 위해 Train Recording만 사용하여 진입로별 Conflict Point를 다시 계산하였다.
+
+Conflict Point는 각 Entry Line 통과 0.4초 후 차량 위치의 좌표별 중앙값으로 정의하였다.
+
+Validation 및 Test Recording의 미래 궤적은 새로운 Geometry 생성에 사용하지 않았다.
+
+**기존 Geometry와 Train-only Geometry 비교**
+
+| Entry | Conflict Point Shift (m) | Tangent Rotation (deg) |
+|---|---:|---:|
+| 0 | 0.0184 | -0.024 |
+| 1 | 0.0101 | -0.013 |
+| 2 | 0.0147 | +0.183 |
+| 3 | 0.0280 | +0.203 |
+
+최대 Conflict Point 위치 변화는 0.0280m로 나타났다.
+
+**Conflict Vehicle Matching 변화**
+
+| Split | Samples | Changed | Change Rate |
+|---|---:|---:|---:|
+| Train | 77,644 | 165 | 0.2125% |
+| Validation | 16,751 | 32 | 0.1910% |
+| Test | 13,296 | 27 | 0.2031% |
+
+Train-only Geometry 적용 후 Test Sample의 0.2031%에서 Conflict Vehicle 매칭이 변경되었다.
+
+변경된 Geometry로 Interaction Feature를 다시 생성하고, Train 데이터 기준 정규화 통계를 적용하여 Backbone 및 Trajectory Head를 재학습하였다.
+
+**재학습 결과**
+
+| Metric | Original Interaction | Train-only Interaction |
+|---|---:|---:|
+| GO/WAIT Accuracy | 99.73% | 99.73% |
+| TTE MAE (s) | 0.1024 | 0.1024 |
+| Entry Speed MAE (m/s) | 0.3456 | 0.3455 |
+| Entry Heading MAE (deg) | 2.384 | 2.384 |
+| ADE (m) | 0.7742 | 0.7745 |
+| FDE (m) | 1.8905 | 1.8905 |
+
+Train-only Geometry를 적용해도 기존 모델과 거의 동일한 성능을 유지하였다.
+
+최종 논문 및 프로젝트의 대표 성능은 Train-only Geometry 모델의 ADE 0.7745m, FDE 1.8905m를 기준으로 한다.
 
 ---
 
